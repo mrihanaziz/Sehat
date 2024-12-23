@@ -122,8 +122,9 @@ if ($result_obat && mysqli_num_rows($result_obat) > 0) {
                         <select name="barang_yang_dibeli" id="barang_yang_dibeli" required>
                             <option value="" disabled selected>Pilih Barang</option>
                             <?php foreach ($obat_options as $obat): ?>
-                                <option value="<?= htmlspecialchars($obat['id_obat']) ?>"
+                                <option value="<?= htmlspecialchars($obat['nama_obat']) ?>"
                                     data-harga="<?= htmlspecialchars($obat['harga_jual']) ?>"
+                                    <?= (isset($data_pesanan['barang_yang_dibeli']) && $data_pesanan['barang_yang_dibeli'] == $obat['nama_obat']) ? 'selected' : ''; ?>>
                                     <?= htmlspecialchars($obat['nama_obat']) ?>
                                 </option>
                             <?php endforeach; ?>
@@ -256,28 +257,67 @@ if (isset($_POST['aksi'])) {
                     status_dikirim = '$status_dikirim',
                     harga = $harga 
                   WHERE nomor_pesanan = '$nomor_pesanan'";
-    } else {
-        // Periksa apakah nomor pesanan sudah ada
-        $check_query = "SELECT nomor_pesanan FROM pesanan WHERE nomor_pesanan = '$nomor_pesanan'";
-        $check_result = mysqli_query($conn, $check_query);
 
-        if (mysqli_num_rows($check_result) > 0) {
-            // Nomor pesanan sudah ada, munculkan alert
-            echo "<script>
-                    Swal.fire({
-                        icon: 'warning',
-                        title: 'Peringatan',
-                        text: 'Nomor pesanan sudah ada di database. Gunakan nomor pesanan yang berbeda.',
-                    }).then(() => {
-                        window.history.back();
-                    });
-                  </script>";
-            exit; // Hentikan proses jika nomor pesanan sudah ada
+        // Ambil jumlah stok lama dari pesanan sebelumnya
+        $old_qty_query = "SELECT qty FROM pesanan WHERE nomor_pesanan = '$nomor_pesanan'";
+        $old_qty_result = mysqli_query($conn, $old_qty_query);
+        $old_qty = $old_qty_result ? mysqli_fetch_assoc($old_qty_result)['qty'] : 0;
+
+        // Hitung perbedaan stok
+        $stok_update = $qty - $old_qty;
+    } else {
+        // Query untuk insert data baru
+        $query = "INSERT INTO pesanan (nomor_pesanan, nama_customer, barang_yang_dibeli, qty, alamat, status_dikirim, harga) 
+                  VALUES ('$nomor_pesanan', '$nama_customer', '$barang_yang_dibeli', $qty, '$alamat', '$status_dikirim', $harga)";
+
+        $stok_check_query = "SELECT stok FROM obat WHERE nama_obat = '$barang_yang_dibeli'";
+        $stok_check_result = mysqli_query($conn, $stok_check_query);
+
+        if ($stok_check_result) {
+            $stok_data = mysqli_fetch_assoc($stok_check_result);
+            if ($stok_data['stok'] < $qty) {
+                // Jika stok tidak cukup, tampilkan peringatan dan hentikan proses
+                echo "<script>
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Stok Tidak Cukup',
+                    text: 'Jumlah barang yang dipesan melebihi stok yang tersedia.',
+                }).then(() => {
+                    window.history.back();
+                });
+              </script>";
+                exit;
+            }
         } else {
-            // Query untuk insert data baru
-            $query = "INSERT INTO pesanan (nomor_pesanan, nama_customer, barang_yang_dibeli, qty, alamat, status_dikirim, harga) 
-                      VALUES ('$nomor_pesanan', '$nama_customer', '$barang_yang_dibeli', $qty, '$alamat', '$status_dikirim', $harga)";
+            echo "<script>
+            Swal.fire({
+                icon: 'error',
+                title: 'Gagal',
+                text: 'Terjadi kesalahan saat memeriksa stok.',
+            }).then(() => {
+                window.history.back();
+            });
+          </script>";
+            exit;
         }
+        $stok_update = $qty;
+    }
+
+    // Kurangi stok di tabel obat
+    $stok_query = "UPDATE obat SET stok = stok - $stok_update WHERE nama_obat = '$barang_yang_dibeli'";
+    $stok_result = mysqli_query($conn, $stok_query);
+
+    if (!$stok_result) {
+        echo "<script>
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Gagal',
+                    text: 'Terjadi kesalahan saat memperbarui stok.',
+                }).then(() => {
+                    window.history.back();
+                });
+              </script>";
+        exit;
     }
 
     // Eksekusi query
